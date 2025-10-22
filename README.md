@@ -110,6 +110,6 @@ SELECT
 FROM transit_stats ts
 JOIN bookings.airports_data ad ON ad.airport_code = ts.airport
 LEFT JOIN total_stats tot ON tot.airport = ts.airport
-ORDER BY transit_ratio DESC  -- ✅ сортировка по доле транзита (по убыванию)
+ORDER BY transit_ratio DESC
 LIMIT 15;
 ```
