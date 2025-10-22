@@ -6,7 +6,7 @@ WHERE arrival_airport = 'SVO'
 ORDER BY COALESCE(actual_arrival, scheduled_arrival) ASC;
 
 
-UPDATE tickets
+UPDATE ticket_flights
 SET amount = amount + 1000
 WHERE flight_id IN (
     SELECT flight_id
