@@ -9,7 +9,7 @@ WHERE arrival_airport = 'SVO'
 ORDER BY COALESCE(actual_arrival, scheduled_arrival) ASC;
 ```
 
-'''
+``` sql
 UPDATE ticket_flights
 SET amount = amount + 1000
 WHERE flight_id IN (
@@ -18,9 +18,9 @@ WHERE flight_id IN (
     WHERE (COALESCE(actual_departure, scheduled_departure)::time BETWEEN '07:00' AND '10:00')
        OR (COALESCE(actual_departure, scheduled_departure)::time BETWEEN '17:00' AND '20:00')
 );
-'''
+```
 
-'''
+``` sql
 SELECT sub.timezone,
        sub.airport_code,
        sub.airport_name->>'en' AS airport_name_en,
@@ -39,4 +39,4 @@ FROM (
 ) AS sub
 WHERE rn = 1
 ORDER BY timezone;
-'''
+```
