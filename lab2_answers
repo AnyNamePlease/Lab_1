@@ -1,0 +1,139 @@
+-- 1. Точный расчёт на уровне пассажирских сегментов (Postgres)
+WITH seg AS (
+  SELECT
+    passenger_id,
+    itinerary_id,
+    segment_seq,
+    origin_airport,
+    dest_airport,
+    departure_ts,
+    arrival_ts
+  FROM passenger_segments
+),
+-- для каждого пассажира упорядочим сегменты и найдём пары arrival->next_departure
+pairs AS (
+  SELECT
+    s.passenger_id,
+    s.itinerary_id,
+    s.segment_seq    AS arr_seq,
+    s.dest_airport   AS hub_airport,
+    s.arrival_ts     AS arrival_ts,
+    s_next.segment_seq AS dep_seq,
+    s_next.origin_airport AS dep_origin_airport,
+    s_next.departure_ts   AS departure_ts
+  FROM seg s
+  JOIN seg s_next
+    ON s.passenger_id = s_next.passenger_id
+   AND s.itinerary_id IS NOT DISTINCT FROM s_next.itinerary_id  -- если есть itinerary
+   AND s_next.segment_seq = s.segment_seq + 1
+  WHERE s.dest_airport = s_next.origin_airport  -- стыковка в одном и том же аэропорту
+    AND s.arrival_ts IS NOT NULL
+    AND s_next.departure_ts IS NOT NULL
+),
+-- вычислим время стыковки (в минутах) и отфильтруем "реальные" стыковки, например
+-- с минимальной и максимальной логичной длиной (опционально)
+connections AS (
+  SELECT
+    passenger_id,
+    hub_airport,
+    EXTRACT(EPOCH FROM (departure_ts - arrival_ts)) / 60.0 AS conn_minutes
+  FROM pairs
+  WHERE departure_ts > arrival_ts  -- исключаем отрицательные/пересекающиеся
+    AND (departure_ts - arrival_ts) >= INTERVAL '20 minutes'  -- минимальная стыковка (настройте)
+    AND (departure_ts - arrival_ts) <= INTERVAL '24 hours'    -- максимальная (настройте)
+)
+-- агрегируем по аэропорту
+SELECT
+  hub_airport AS airport,
+  COUNT(DISTINCT ps.passenger_id) AS total_unique_passengers,
+  COUNT(DISTINCT c.passenger_id)   AS transit_unique_passengers,
+  ROUND(
+    CASE WHEN COUNT(DISTINCT ps.passenger_id) = 0 THEN 0
+         ELSE (COUNT(DISTINCT c.passenger_id)::numeric / COUNT(DISTINCT ps.passenger_id)) END
+  , 4) AS transit_ratio,
+  -- статистика времени стыковки (в минутах)
+  MIN(c.conn_minutes)                AS conn_min_min,
+  AVG(c.conn_minutes)                AS conn_avg_min,
+  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY c.conn_minutes)  AS conn_median_min,
+  PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY c.conn_minutes)  AS conn_90pct_min,
+  MAX(c.conn_minutes)                AS conn_max_min,
+  COUNT(*) AS total_connection_events
+FROM
+  -- все пассажиры, которые прошли через аэропорт (либо прилетели/вылетели)
+  (
+    SELECT passenger_id, origin_airport AS airport FROM seg
+    UNION ALL
+    SELECT passenger_id, dest_airport   AS airport FROM seg
+  ) ps_all
+  -- преобразуем чтобы посчитать общий пул пассажиров, проходивших через каждый аэропорт
+  JOIN LATERAL (
+    SELECT passenger_id
+    FROM (VALUES (ps_all.passenger_id)) AS v(pid)
+  ) ps(pid) ON true
+  -- join distinct by airport
+  LEFT JOIN connections c
+    ON c.hub_airport = ps_all.airport
+  -- агрегация: группируем по аэропорту
+GROUP BY hub_airport
+ORDER BY transit_unique_passengers DESC
+LIMIT 200;  -- топ 200 хабов
+
+
+
+-- 2. Приблизительная оценка транзитов по агрегированным данным (Postgres)
+WITH inbound AS (
+  SELECT
+    f.dest_airport AS airport,
+    f.flight_id AS in_flight,
+    f.arrival_ts,
+    fp.pax_count AS in_pax
+  FROM flights f
+  JOIN flight_passengers fp ON fp.flight_id = f.flight_id
+),
+outbound AS (
+  SELECT
+    f.origin_airport AS airport,
+    f.flight_id AS out_flight,
+    f.departure_ts,
+    fp.pax_count AS out_pax
+  FROM flights f
+  JOIN flight_passengers fp ON fp.flight_id = f.flight_id
+),
+pairs AS (
+  -- связываем inbound и outbound рейсы в одном аэропорту, где outbound отходит позже inbound.arrival
+  SELECT
+    i.airport,
+    i.in_flight,
+    o.out_flight,
+    i.arrival_ts,
+    o.departure_ts,
+    LEAST(i.in_pax, o.out_pax) AS est_transit_pax,  -- грубая оценка: min потоков
+    EXTRACT(EPOCH FROM (o.departure_ts - i.arrival_ts)) / 60.0 AS conn_minutes
+  FROM inbound i
+  JOIN outbound o
+    ON i.airport = o.airport
+   AND o.departure_ts > i.arrival_ts
+   AND (o.departure_ts - i.arrival_ts) BETWEEN INTERVAL '20 minutes' AND INTERVAL '24 hours'  -- window
+)
+SELECT
+  airport,
+  SUM(est_transit_pax) AS est_transit_pax_sum,
+  -- общий пассажиропоток через аэропорт (приближённо: сумма всех inbound+outbound / 2 или уникально считать
+  -- по flights*passengers; ниже — простая оценка total_handled_pax)
+  (SELECT SUM(fp.pax_count) FROM flights f JOIN flight_passengers fp ON f.flight_id = fp.flight_id
+    WHERE f.origin_airport = p.airport OR f.dest_airport = p.airport
+  ) AS approx_total_pax_handled,
+  ROUND(
+    CASE WHEN (SELECT SUM(fp.pax_count) FROM flights f JOIN flight_passengers fp ON f.flight_id = fp.flight_id
+                WHERE f.origin_airport = p.airport OR f.dest_airport = p.airport) = 0
+         THEN 0
+         ELSE SUM(est_transit_pax)::numeric /
+              (SELECT SUM(fp.pax_count) FROM flights f JOIN flight_passengers fp ON f.flight_id = fp.flight_id
+                WHERE f.origin_airport = p.airport OR f.dest_airport = p.airport) END
+  , 4) AS approx_transit_ratio,
+  AVG(conn_minutes) AS avg_conn_minutes,
+  COUNT(*) AS pair_count
+FROM pairs p
+GROUP BY airport
+ORDER BY est_transit_pax_sum DESC
+LIMIT 200;
