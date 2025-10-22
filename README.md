@@ -1,6 +1,7 @@
 # Lab_1
 ## Ответы для lab1
 '''
+sql
 SELECT *
 FROM flights
 WHERE arrival_airport = 'SVO'
