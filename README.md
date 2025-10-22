@@ -1,14 +1,13 @@
 # Lab_1
 ## Ответы для lab1
-'''
-sql
+``` sql
 SELECT *
 FROM flights
 WHERE arrival_airport = 'SVO'
   AND COALESCE(actual_arrival, scheduled_arrival)::date = '2017-07-22'
   AND COALESCE(actual_arrival, scheduled_arrival)::time BETWEEN '16:00' AND '19:00'
 ORDER BY COALESCE(actual_arrival, scheduled_arrival) ASC;
-'''
+```
 
 '''
 UPDATE ticket_flights
