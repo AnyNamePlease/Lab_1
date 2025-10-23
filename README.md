@@ -1,5 +1,7 @@
 # Lab_1
 ## Ответы для lab1
+### 1.2
+В этом запросе использовались SELECT * (Выбрать все столбцы из таблицы), FROM (из какой таблицы), WHERE, AND, COALESCE (Функция, которая берет первый элементт не равный NULL), ORDER BY (Сортировка), ASC (По возрастанию)
 ``` sql
 SELECT *
 FROM flights
@@ -8,7 +10,8 @@ WHERE arrival_airport = 'SVO'
   AND COALESCE(actual_arrival, scheduled_arrival)::time BETWEEN '16:00' AND '19:00'
 ORDER BY COALESCE(actual_arrival, scheduled_arrival) ASC;
 ```
-
+### 2.3
+В этом запросе использовались UPDATE (Обновить таблицу), SET (Установить-поменять значения), IN(...) (Внутренний запрос. Запросил с фильтрами нужные flight_id)
 ``` sql
 UPDATE ticket_flights
 SET amount = amount + 1000
@@ -19,8 +22,9 @@ WHERE flight_id IN (
        OR (COALESCE(actual_departure, scheduled_departure)::time BETWEEN '17:00' AND '20:00')
 );
 ```
-
-``` sql
+### 3.3
+В этом запросе я беру результаты внутреннего запроса и составляю таблицу с самыми северными аэропортами во внешнем. Я использую ROW_NUMBER() OVER(...) для того, чтобы пронумеровать уже отсортированные для каждой временной зоны по убыванию широты аэропорты. Из этого внутреннего запроса составляю таблицу, куда добавляю из каждой зоны аэропорт с номером 1. Использовал PARTITION BY (Разделение по зонам, в данном случае), AS ... ()
+ ``` sql
 SELECT sub.timezone,
        sub.airport_code,
        sub.airport_name->>'en' AS airport_name_en,
